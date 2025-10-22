@@ -269,6 +269,157 @@ class FileOperations:
             raise Exception(f"Error moving files: {str(e)}")
 
     @staticmethod
+    def find_duplicates(directory: str, min_size: int = 102400) -> Dict[str, Any]:
+        """
+        Find duplicate files in a directory tree using file hashing.
+
+        Args:
+            directory: Directory to scan for duplicates
+            min_size: Minimum file size in bytes to consider (default: 100KB = 102400)
+
+        Returns:
+            Dictionary with duplicate groups, wasted space, and statistics
+        """
+        try:
+            import hashlib
+            from collections import defaultdict
+
+            # Validate directory
+            if not os.path.exists(directory):
+                raise Exception(f"Directory does not exist: {directory}")
+
+            # First pass: Group files by size (fast check before hashing)
+            size_groups = defaultdict(list)
+            total_files = 0
+            skipped_small = 0
+
+            print(f"Scanning {directory} for files...")
+
+            for root, _, filenames in os.walk(directory):
+                for filename in filenames:
+                    filepath = os.path.join(root, filename)
+                    try:
+                        if os.path.isfile(filepath):
+                            total_files += 1
+                            stat = os.stat(filepath)
+                            file_size = stat.st_size
+
+                            # Skip files smaller than min_size
+                            if file_size < min_size:
+                                skipped_small += 1
+                                continue
+
+                            size_groups[file_size].append(filepath)
+
+                    except (OSError, PermissionError):
+                        continue
+
+            # Second pass: Hash files that have the same size
+            hash_groups = defaultdict(list)
+            files_hashed = 0
+
+            print(f"Hashing files with duplicate sizes...")
+
+            for size, filepaths in size_groups.items():
+                # Only hash if there are multiple files with the same size
+                if len(filepaths) > 1:
+                    for filepath in filepaths:
+                        try:
+                            # Calculate SHA256 hash
+                            file_hash = FileOperations._hash_file(filepath)
+                            files_hashed += 1
+
+                            hash_groups[file_hash].append({
+                                'path': filepath,
+                                'name': os.path.basename(filepath),
+                                'size': size,
+                                'readable_size': FileOperations._format_size(size),
+                                'modified': datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+                            })
+
+                        except Exception as e:
+                            continue
+
+            # Find actual duplicates (hash appears more than once)
+            duplicate_groups = []
+            total_wasted_space = 0
+            total_duplicate_files = 0
+
+            for file_hash, files in hash_groups.items():
+                if len(files) > 1:
+                    # Sort by path for consistent ordering
+                    files.sort(key=lambda x: x['path'])
+
+                    # Calculate wasted space (size of all duplicates except one)
+                    file_size = files[0]['size']
+                    wasted_space = file_size * (len(files) - 1)
+                    total_wasted_space += wasted_space
+                    total_duplicate_files += len(files)
+
+                    duplicate_groups.append({
+                        'hash': file_hash[:16],  # Show first 16 chars of hash
+                        'count': len(files),
+                        'size': file_size,
+                        'readable_size': FileOperations._format_size(file_size),
+                        'wasted_space': wasted_space,
+                        'readable_wasted': FileOperations._format_size(wasted_space),
+                        'files': files,
+                        'suggestion': f"Keep: {files[0]['path']}\nConsider deleting: {len(files) - 1} duplicate(s)"
+                    })
+
+            # Sort duplicate groups by wasted space (largest first)
+            duplicate_groups.sort(key=lambda x: x['wasted_space'], reverse=True)
+
+            result = {
+                'success': True,
+                'directory': directory,
+                'total_files_scanned': total_files,
+                'files_hashed': files_hashed,
+                'skipped_small_files': skipped_small,
+                'min_size_bytes': min_size,
+                'min_size_readable': FileOperations._format_size(min_size),
+                'duplicate_groups': duplicate_groups,
+                'total_duplicate_groups': len(duplicate_groups),
+                'total_duplicate_files': total_duplicate_files,
+                'total_wasted_space': total_wasted_space,
+                'total_wasted_readable': FileOperations._format_size(total_wasted_space),
+                'message': f"Found {len(duplicate_groups)} duplicate group(s) wasting {FileOperations._format_size(total_wasted_space)}"
+            }
+
+            if len(duplicate_groups) == 0:
+                result['message'] = "No duplicate files found"
+
+            return result
+
+        except Exception as e:
+            raise Exception(f"Error finding duplicates: {str(e)}")
+
+    @staticmethod
+    def _hash_file(filepath: str, block_size: int = 65536) -> str:
+        """
+        Calculate SHA256 hash of a file.
+
+        Args:
+            filepath: Path to the file
+            block_size: Size of blocks to read (default 64KB)
+
+        Returns:
+            Hexadecimal SHA256 hash string
+        """
+        import hashlib
+
+        sha256 = hashlib.sha256()
+
+        with open(filepath, 'rb') as f:
+            while True:
+                data = f.read(block_size)
+                if not data:
+                    break
+                sha256.update(data)
+
+        return sha256.hexdigest()
+
+    @staticmethod
     def _format_size(bytes_size: int) -> str:
         """Convert bytes to human-readable format."""
         for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
@@ -398,6 +549,28 @@ class AgentProcessor:
                     'required': ['source_directory', 'destination_directory', 'pattern']
                 }
             }
+        },
+        {
+            'type': 'function',
+            'function': {
+                'name': 'find_duplicates',
+                'description': 'Find duplicate files in a directory tree using file content hashing. Use this when the user wants to find duplicate files, identify wasted space, or clean up redundant files. Useful for queries like "find duplicate files", "what files are wasting space", "find duplicate photos".',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'directory': {
+                            'type': 'string',
+                            'description': 'The directory to scan for duplicate files. Use the user home directory if not specified.'
+                        },
+                        'min_size': {
+                            'type': 'integer',
+                            'description': 'Minimum file size in bytes to consider. Default is 102400 (100KB). Files smaller than this are skipped for performance. Use 0 to scan all files, or larger values like 1048576 (1MB) for faster scans.',
+                            'default': 102400
+                        }
+                    },
+                    'required': ['directory']
+                }
+            }
         }
     ]
 
@@ -447,7 +620,8 @@ Be helpful and interpret user requests intelligently."""
                     'get_largest_files': 'largest_files',
                     'create_folder': 'create_folder',
                     'list_directory': 'list_directory',
-                    'move_files': 'move_files'
+                    'move_files': 'move_files',
+                    'find_duplicates': 'find_duplicates'
                 }
 
                 action = action_map.get(function_name)
@@ -625,6 +799,21 @@ def execute():
                 params.get('source_directory'),
                 params.get('destination_directory'),
                 params.get('pattern')
+            )
+            return jsonify({
+                'success': result['success'],
+                'data': result,
+                'message': result['message']
+            })
+
+        elif action == 'find_duplicates':
+            # Convert min_size to int if it's a string (from LLM)
+            min_size = params.get('min_size', 102400)
+            min_size = int(min_size) if isinstance(min_size, str) else min_size
+
+            result = FileOperations.find_duplicates(
+                params.get('directory', BASE_PATH),
+                min_size
             )
             return jsonify({
                 'success': result['success'],

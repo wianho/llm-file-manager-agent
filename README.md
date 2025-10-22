@@ -28,6 +28,7 @@ The LLM understands natural language, so you can phrase requests however you lik
 | **Create Folder** | "Create folder my_project"<br>"I need a new directory called test"<br>"Make a folder named docs" | Create a new directory |
 | **List Directory** | "List current directory"<br>"Show me what files are in here"<br>"What's in this folder?" | Show contents of a directory |
 | **Move Files** | "Move all Screenshot*.png files to archive"<br>"Relocate *.txt files from Downloads to Documents"<br>"Organize report_*.pdf files" | Move files matching a pattern from one directory to another |
+| **Find Duplicates** | "Find duplicate files"<br>"Show me duplicate files in Downloads"<br>"Which files are duplicated?" | Find duplicate files using SHA256 hashing and show wasted space |
 
 ## 📋 Prerequisites
 
@@ -210,7 +211,7 @@ The agent uses **Ollama's function calling** feature to intelligently understand
 
 ### Available Tools
 
-The LLM has access to 5 file operation tools defined in `backend/app.py:195`:
+The LLM has access to 6 file operation tools defined in `backend/app.py`:
 
 ```python
 - find_files_by_extension: Search for files with specific extensions
@@ -218,6 +219,7 @@ The LLM has access to 5 file operation tools defined in `backend/app.py:195`:
 - create_folder: Make new directories
 - list_directory: Show directory contents
 - move_files: Move files matching a pattern from one directory to another
+- find_duplicates: Find duplicate files using SHA256 hashing
 ```
 
 Each tool has a detailed description that helps the LLM decide when to use it.
@@ -240,6 +242,7 @@ Planned additions:
 - **File Delete**: Safe file deletion with confirmation
 - **File Stats**: Detailed file metadata
 - **Copy Files**: Copy files matching a pattern
+- **Smart Cleanup**: Suggest which duplicate files to delete based on file locations
 
 ## 🔧 Configuration
 
@@ -420,6 +423,52 @@ Execute a specific file operation.
 }
 ```
 
+#### Find Duplicates Example
+
+**Request:**
+```json
+{
+  "action": "find_duplicates",
+  "params": {
+    "directory": "/Users/andle/Downloads",
+    "min_size": 102400
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "duplicate_groups": [
+      {
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "files": [
+          {
+            "path": "/Users/andle/Downloads/photo1.jpg",
+            "name": "photo1.jpg",
+            "size": 2048576,
+            "readable_size": "2.00 MB"
+          },
+          {
+            "path": "/Users/andle/Downloads/backup/photo1.jpg",
+            "name": "photo1.jpg",
+            "size": 2048576,
+            "readable_size": "2.00 MB"
+          }
+        ],
+        "wasted_space": 2048576,
+        "wasted_readable": "2.00 MB"
+      }
+    ],
+    "total_wasted_space": 2048576,
+    "total_wasted_readable": "2.00 MB"
+  },
+  "message": "Found 1 duplicate group(s) wasting 2.00 MB"
+}
+```
+
 ### Available Actions
 
 | Action | Parameters | Description |
@@ -429,6 +478,7 @@ Execute a specific file operation.
 | `create_folder` | directory, folder_name | Create new folder |
 | `list_directory` | directory | List directory contents |
 | `move_files` | source_directory, destination_directory, pattern | Move files matching a pattern |
+| `find_duplicates` | directory, min_size | Find duplicate files using SHA256 hashing (default min_size: 102400 bytes = 100KB) |
 
 ## 📄 License
 

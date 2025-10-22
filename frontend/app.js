@@ -214,6 +214,8 @@ function formatResponse(data, action) {
         html += formatDirectoryList(data.data);
     } else if (action === 'create_folder' && data.data) {
         html += `<p class="file-path">📁 ${data.data.path}</p>`;
+    } else if (action === 'find_duplicates' && data.data && data.data.duplicate_groups) {
+        html += formatDuplicateGroups(data.data);
     }
 
     return html;
@@ -264,6 +266,63 @@ function formatDirectoryList(dirData) {
     });
 
     html += '</tbody></table></div>';
+    return html;
+}
+
+/**
+ * Format duplicate file groups
+ */
+function formatDuplicateGroups(duplicateData) {
+    const groups = duplicateData.duplicate_groups || [];
+
+    if (groups.length === 0) {
+        return '<p>No duplicate files found.</p>';
+    }
+
+    // Show first 10 groups to avoid overwhelming the UI
+    const displayGroups = groups.slice(0, 10);
+    const hasMore = groups.length > 10;
+
+    let html = '<div class="file-results" style="margin-top: 15px;">';
+
+    displayGroups.forEach((group, index) => {
+        html += `
+            <div style="margin-bottom: 20px; padding: 15px; background: rgba(102, 126, 234, 0.1); border-radius: 8px; border-left: 4px solid #667eea;">
+                <h4 style="margin: 0 0 10px 0; color: #667eea;">
+                    Group ${index + 1}
+                    <span style="color: #f56565; font-weight: bold;">(${group.wasted_readable} wasted)</span>
+                </h4>
+        `;
+
+        // List all files in this group
+        group.files.forEach((file, fileIndex) => {
+            html += `
+                <div style="margin: 5px 0; padding: 8px; background: rgba(0, 0, 0, 0.2); border-radius: 4px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span class="file-path" style="flex: 1; word-break: break-all;">
+                            📄 ${escapeHtml(file.path)}
+                        </span>
+                        <span style="margin-left: 15px; white-space: nowrap; color: #a0aec0;">
+                            ${file.readable_size}
+                        </span>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += '</div>';
+    });
+
+    if (hasMore) {
+        html += `
+            <p style="color: #a0aec0; font-style: italic;">
+                ... and ${groups.length - 10} more duplicate group(s).
+                Showing first 10 groups only.
+            </p>
+        `;
+    }
+
+    html += '</div>';
     return html;
 }
 
