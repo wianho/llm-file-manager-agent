@@ -175,6 +175,100 @@ class FileOperations:
             raise Exception(f"Error listing directory: {str(e)}")
 
     @staticmethod
+    def move_files(source_directory: str, destination_directory: str, pattern: str) -> Dict[str, Any]:
+        """
+        Move files matching a pattern from source to destination directory.
+
+        Args:
+            source_directory: Directory containing files to move
+            destination_directory: Directory where files should be moved
+            pattern: File pattern to match (e.g., 'Screenshot*.png', '*.txt')
+
+        Returns:
+            Dictionary with operation results and count of moved files
+        """
+        try:
+            import glob
+            import shutil
+
+            # Validate directories
+            if not os.path.exists(source_directory):
+                raise Exception(f"Source directory does not exist: {source_directory}")
+
+            if not os.path.exists(destination_directory):
+                # Create destination directory if it doesn't exist
+                os.makedirs(destination_directory, exist_ok=True)
+
+            # Build the full pattern path
+            search_pattern = os.path.join(source_directory, pattern)
+
+            # Find matching files
+            matching_files = glob.glob(search_pattern)
+
+            if not matching_files:
+                return {
+                    'success': True,
+                    'message': f'No files found matching pattern: {pattern}',
+                    'moved_count': 0,
+                    'files': []
+                }
+
+            moved_files = []
+            errors = []
+
+            for source_path in matching_files:
+                # Only move files, not directories
+                if os.path.isfile(source_path):
+                    try:
+                        filename = os.path.basename(source_path)
+                        dest_path = os.path.join(destination_directory, filename)
+
+                        # Check if file already exists at destination
+                        if os.path.exists(dest_path):
+                            errors.append({
+                                'file': filename,
+                                'error': f'File already exists at destination'
+                            })
+                            continue
+
+                        # Move the file
+                        shutil.move(source_path, dest_path)
+
+                        # Get file info
+                        stat = os.stat(dest_path)
+                        moved_files.append({
+                            'name': filename,
+                            'source': source_path,
+                            'destination': dest_path,
+                            'size': stat.st_size,
+                            'readable_size': FileOperations._format_size(stat.st_size)
+                        })
+                    except Exception as e:
+                        errors.append({
+                            'file': os.path.basename(source_path),
+                            'error': str(e)
+                        })
+
+            result = {
+                'success': True,
+                'message': f'Moved {len(moved_files)} file(s) from {source_directory} to {destination_directory}',
+                'moved_count': len(moved_files),
+                'files': moved_files,
+                'source_directory': source_directory,
+                'destination_directory': destination_directory,
+                'pattern': pattern
+            }
+
+            if errors:
+                result['errors'] = errors
+                result['error_count'] = len(errors)
+
+            return result
+
+        except Exception as e:
+            raise Exception(f"Error moving files: {str(e)}")
+
+    @staticmethod
     def _format_size(bytes_size: int) -> str:
         """Convert bytes to human-readable format."""
         for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
@@ -279,6 +373,31 @@ class AgentProcessor:
                     'required': []
                 }
             }
+        },
+        {
+            'type': 'function',
+            'function': {
+                'name': 'move_files',
+                'description': 'Move files matching a pattern from one directory to another. Use this when the user wants to move, relocate, or organize files by pattern (like Screenshot*.png, *.txt, etc.).',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {
+                        'source_directory': {
+                            'type': 'string',
+                            'description': 'The source directory containing files to move.'
+                        },
+                        'destination_directory': {
+                            'type': 'string',
+                            'description': 'The destination directory where files should be moved to.'
+                        },
+                        'pattern': {
+                            'type': 'string',
+                            'description': 'The file pattern to match (e.g., "Screenshot*.png", "*.txt", "report_*.pdf"). Uses glob pattern syntax.'
+                        }
+                    },
+                    'required': ['source_directory', 'destination_directory', 'pattern']
+                }
+            }
         }
     ]
 
@@ -327,7 +446,8 @@ Be helpful and interpret user requests intelligently."""
                     'find_files_by_extension': 'find_by_extension',
                     'get_largest_files': 'largest_files',
                     'create_folder': 'create_folder',
-                    'list_directory': 'list_directory'
+                    'list_directory': 'list_directory',
+                    'move_files': 'move_files'
                 }
 
                 action = action_map.get(function_name)
@@ -498,6 +618,18 @@ def execute():
                 'success': True,
                 'data': result,
                 'message': f"Listed {len(result['items'])} items"
+            })
+
+        elif action == 'move_files':
+            result = FileOperations.move_files(
+                params.get('source_directory'),
+                params.get('destination_directory'),
+                params.get('pattern')
+            )
+            return jsonify({
+                'success': result['success'],
+                'data': result,
+                'message': result['message']
             })
 
         else:
